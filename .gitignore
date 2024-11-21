@@ -1,0 +1,5 @@
+.env
+release/
+drone-nexus-publish
+.idea/
+drone-output.txt
