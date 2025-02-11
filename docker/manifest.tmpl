@@ -18,14 +18,8 @@ manifests:
       architecture: arm64
       os: linux
   -
-    image: plugins/nexus-publish:{{#if build.tag}}{{trimPrefix "v" build.tag}}-{{/if}}linux-arm
+    image: plugins/nexus-publish:{{#if build.tag}}{{trimPrefix "v" build.tag}}-{{/if}}windows-ltsc2022-amd64
     platform:
-      variant: v7
-      architecture: arm
-      os: linux
-  -
-    image: plugins/nexus-publish:{{#if build.tag}}{{trimPrefix "v" build.tag}}-{{/if}}linux-arm
-    platform:
-      variant: v6
-      architecture: arm
-      os: linux
+      architecture: amd64
+      os: windows
+      version: ltsc2022
