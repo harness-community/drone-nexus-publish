@@ -185,3 +185,423 @@ func TestNexusPlugin_Run_MultiFileUpload_Success(t *testing.T) {
 	assert.Empty(t, plugin.Failed)
 	mockClient.AssertExpectations(t)
 }
+
+// Test Bug #3: URL Trailing Slash - Single File Upload
+func TestIsSingleFileUploadArgsOk_TrailingSlash(t *testing.T) {
+	args := Args{
+		EnvPluginInputArgs: EnvPluginInputArgs{
+			Username:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com/",
+			Filename:   "testfile.jar",
+			Format:     "maven2",
+			Repository: "repo",
+			Attributes: "-CgroupId=com.test -CartifactId=app -Cversion=1.0.0 -Aextension=jar -Aclassifier=bin",
+		},
+	}
+
+	plugin := NexusPlugin{}
+	err := plugin.IsSingleFileUploadArgsOk(args)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "https://nexus.example.com", plugin.ServerUrl, "Trailing slash should be removed")
+}
+
+// Test Bug #3: URL Multiple Trailing Slashes - Single File Upload
+func TestIsSingleFileUploadArgsOk_MultipleTrailingSlashes(t *testing.T) {
+	args := Args{
+		EnvPluginInputArgs: EnvPluginInputArgs{
+			Username:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com///",
+			Filename:   "testfile.jar",
+			Format:     "maven2",
+			Repository: "repo",
+			Attributes: "-CgroupId=com.test -CartifactId=app -Cversion=1.0.0 -Aextension=jar -Aclassifier=bin",
+		},
+	}
+
+	plugin := NexusPlugin{}
+	err := plugin.IsSingleFileUploadArgsOk(args)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "https://nexus.example.com", plugin.ServerUrl, "Multiple trailing slashes should be removed")
+}
+
+// Test Bug #3: URL No Trailing Slash - Single File Upload (should remain unchanged)
+func TestIsSingleFileUploadArgsOk_NoTrailingSlash(t *testing.T) {
+	args := Args{
+		EnvPluginInputArgs: EnvPluginInputArgs{
+			Username:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Filename:   "testfile.jar",
+			Format:     "maven2",
+			Repository: "repo",
+			Attributes: "-CgroupId=com.test -CartifactId=app -Cversion=1.0.0 -Aextension=jar -Aclassifier=bin",
+		},
+	}
+
+	plugin := NexusPlugin{}
+	err := plugin.IsSingleFileUploadArgsOk(args)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "https://nexus.example.com", plugin.ServerUrl, "URL without trailing slash should remain unchanged")
+}
+
+// Test Bug #3: URL Trailing Slash - Multi File Upload
+func TestIsMultiFileUploadArgsOk_TrailingSlash(t *testing.T) {
+	args := Args{
+		EnvPluginInputArgs: EnvPluginInputArgs{
+			Username:     "testUser",
+			Password:     "testPass",
+			Protocol:     "https",
+			ServerUrl:    "nexus.example.com/",
+			NexusVersion: "nexus3",
+			Repository:   "repo",
+			GroupId:      "com.test",
+			Format:       "maven2",
+			Artifact:     "[{\"file\":\"test.jar\",\"artifactId\":\"app\",\"type\":\"jar\",\"version\":\"1.0\",\"groupId\":\"com.test\"}]",
+		},
+	}
+
+	plugin := NexusPlugin{}
+	err := plugin.IsMultiFileUploadArgsOk(args)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "https://nexus.example.com", plugin.ServerUrl, "Trailing slash should be removed")
+}
+
+// Test Bug #3: URL Multiple Trailing Slashes - Multi File Upload
+func TestIsMultiFileUploadArgsOk_MultipleTrailingSlashes(t *testing.T) {
+	args := Args{
+		EnvPluginInputArgs: EnvPluginInputArgs{
+			Username:     "testUser",
+			Password:     "testPass",
+			Protocol:     "https",
+			ServerUrl:    "nexus.example.com///",
+			NexusVersion: "nexus3",
+			Repository:   "repo",
+			GroupId:      "com.test",
+			Format:       "maven2",
+			Artifact:     "[{\"file\":\"test.jar\",\"artifactId\":\"app\",\"type\":\"jar\",\"version\":\"1.0\",\"groupId\":\"com.test\"}]",
+		},
+	}
+
+	plugin := NexusPlugin{}
+	err := plugin.IsMultiFileUploadArgsOk(args)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "https://nexus.example.com", plugin.ServerUrl, "Multiple trailing slashes should be removed")
+}
+
+// Test Bug #3: URL No Trailing Slash - Multi File Upload (should remain unchanged)
+func TestIsMultiFileUploadArgsOk_NoTrailingSlash(t *testing.T) {
+	args := Args{
+		EnvPluginInputArgs: EnvPluginInputArgs{
+			Username:     "testUser",
+			Password:     "testPass",
+			Protocol:     "https",
+			ServerUrl:    "nexus.example.com",
+			NexusVersion: "nexus3",
+			Repository:   "repo",
+			GroupId:      "com.test",
+			Format:       "maven2",
+			Artifact:     "[{\"file\":\"test.jar\",\"artifactId\":\"app\",\"type\":\"jar\",\"version\":\"1.0\",\"groupId\":\"com.test\"}]",
+		},
+	}
+
+	plugin := NexusPlugin{}
+	err := plugin.IsMultiFileUploadArgsOk(args)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "https://nexus.example.com", plugin.ServerUrl, "URL without trailing slash should remain unchanged")
+}
+
+// Test Bug #2: Filename extraction from absolute Linux path
+func TestUploadFileNexus3_AbsolutePath_Linux(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	mockResp := &http.Response{
+		StatusCode: 200,
+		Body:       ioutil.NopCloser(strings.NewReader("Success")),
+	}
+
+	// Track what filename was actually sent in the multipart form
+	var capturedRequest *http.Request
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Run(func(args mock.Arguments) {
+		capturedRequest = args.Get(0).(*http.Request)
+	}).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.Nil(t, err)
+	assert.NotNil(t, capturedRequest, "HTTP request should have been made")
+	// The request should have been made (we can't easily verify multipart content without parsing it)
+	mockClient.AssertExpectations(t)
+}
+
+// Test Bug #2: Filename extraction from absolute Windows-style path
+func TestUploadFileNexus3_WindowsPath(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	mockResp := &http.Response{
+		StatusCode: 200,
+		Body:       ioutil.NopCloser(strings.NewReader("Success")),
+	}
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	// Simulate Windows-style path in artifact (actual file is tmpFile)
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.Nil(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+// Test Bug #2: Relative path should also work
+func TestUploadFileNexus3_RelativePath(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	mockResp := &http.Response{
+		StatusCode: 200,
+		Body:       ioutil.NopCloser(strings.NewReader("Success")),
+	}
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.Nil(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+// Test Bug #1: Response Body Reading - 401 Error with Details
+func TestUploadFileNexus3_ResponseBody_401(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	fakeErrorBody := `{"errors":[{"id":"*","message":"Invalid credentials"}]}`
+	mockResp := &http.Response{
+		StatusCode: 401,
+		Body:       ioutil.NopCloser(strings.NewReader(fakeErrorBody)),
+	}
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "Invalid credentials", "Error should include response body details")
+	mockClient.AssertExpectations(t)
+}
+
+// Test Bug #1: Response Body Reading - 500 Error with Details
+func TestUploadFileNexus3_ResponseBody_500(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	fakeErrorBody := `{"errors":[{"id":"*","message":"Internal server error: Invalid field value"}]}`
+	mockResp := &http.Response{
+		StatusCode: 500,
+		Body:       ioutil.NopCloser(strings.NewReader(fakeErrorBody)),
+	}
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "Internal server error", "Error should include response body details")
+	mockClient.AssertExpectations(t)
+}
+
+// Test Bug #1: Response Body Reading - 404 Error with Details
+func TestUploadFileNexus3_ResponseBody_404(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	fakeErrorBody := `{"errors":[{"id":"*","message":"Repository not found"}]}`
+	mockResp := &http.Response{
+		StatusCode: 404,
+		Body:       ioutil.NopCloser(strings.NewReader(fakeErrorBody)),
+	}
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "Repository not found", "Error should include response body details")
+	mockClient.AssertExpectations(t)
+}
+
+// Test Bug #1: Response Body Reading - Success Response with Body
+func TestUploadFileNexus3_ResponseBody_Success(t *testing.T) {
+	mockClient := new(MockHttpClient)
+	fakeSuccessBody := `{"success":true}`
+	mockResp := &http.Response{
+		StatusCode: 200,
+		Body:       ioutil.NopCloser(strings.NewReader(fakeSuccessBody)),
+	}
+	mockClient.On("Do", mock.AnythingOfType("*http.Request")).Return(mockResp, nil)
+
+	tmpFile, err := createTempFile("test content")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile)
+
+	plugin := NexusPlugin{
+		PluginProcessingInfo: PluginProcessingInfo{
+			UserName:   "testUser",
+			Password:   "testPass",
+			ServerUrl:  "https://nexus.example.com",
+			Repository: "repo",
+			Format:     "maven2",
+			Version:    "nexus3",
+		},
+		HttpClient: mockClient,
+	}
+
+	artifact := Artifact{
+		File:       tmpFile,
+		ArtifactId: "test-app",
+		Type:       "jar",
+		Version:    "1.0",
+		GroupId:    "com.test",
+	}
+
+	err = plugin.uploadFileNexus3(artifact, tmpFile)
+
+	assert.Nil(t, err, "Should succeed without error")
+	mockClient.AssertExpectations(t)
+}

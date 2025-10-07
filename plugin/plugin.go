@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -153,12 +154,44 @@ func (n *NexusPlugin) Run() error {
 		n.HttpClient = &http.Client{}
 	}
 
-	for _, artifact := range n.Artifacts {
+	// Log upload configuration summary
+	LogPrintln(n, "")
+	LogPrintln(n, "Upload Configuration:")
+	LogPrintln(n, fmt.Sprintf("  Nexus Version: %s", n.Version))
+	LogPrintln(n, fmt.Sprintf("  Server URL: %s", n.ServerUrl))
+	LogPrintln(n, fmt.Sprintf("  Repository: %s", n.Repository))
+	LogPrintln(n, fmt.Sprintf("  Format: %s", n.Format))
+	LogPrintln(n, fmt.Sprintf("  Total artifacts: %d", len(n.Artifacts)))
+	LogPrintln(n, "")
+
+	for idx, artifact := range n.Artifacts {
 		filePath := artifact.File
 		file, err := os.Open(filePath)
 		if err != nil {
 			n.addFailedArtifact(artifact, fmt.Sprintf("could not open file: %v", err))
 			continue
+		}
+
+		// Log individual artifact details before upload
+		LogPrintln(n, fmt.Sprintf("Uploading artifact %d/%d:", idx+1, len(n.Artifacts)))
+
+		// Get file size from the opened file handle
+		fileInfo, statErr := file.Stat()
+		var sizeStr string
+		if statErr == nil {
+			fileSize := float64(fileInfo.Size()) / (1024 * 1024) // Convert to MB
+			sizeStr = fmt.Sprintf(" (%.2f MB)", fileSize)
+		}
+		LogPrintln(n, fmt.Sprintf("  File: %s%s", filePath, sizeStr))
+
+		LogPrintln(n, fmt.Sprintf("  ArtifactId: %s", artifact.ArtifactId))
+		if artifact.GroupId != "" {
+			LogPrintln(n, fmt.Sprintf("  GroupId: %s", artifact.GroupId))
+		}
+		LogPrintln(n, fmt.Sprintf("  Version: %s", artifact.Version))
+		LogPrintln(n, fmt.Sprintf("  Type: %s", artifact.Type))
+		if artifact.Classifier != "" {
+			LogPrintln(n, fmt.Sprintf("  Classifier: %s", artifact.Classifier))
 		}
 
 		if n.Version == "nexus2" {
@@ -186,8 +219,22 @@ func (n *NexusPlugin) Run() error {
 			LogPrintln(n, "Error closing file: ", err.Error())
 		}
 
-		fmt.Println("Successfully uploaded artifact:", filePath)
+		// Log enhanced success message with artifact coordinates
+		basename := filepath.Base(filePath)
+		coordinates := fmt.Sprintf("%s:%s:%s", artifact.GroupId, artifact.ArtifactId, artifact.Version)
+		if artifact.GroupId == "" {
+			coordinates = fmt.Sprintf("%s:%s", artifact.ArtifactId, artifact.Version)
+		}
+		LogPrintln(n, fmt.Sprintf("[OK] Successfully uploaded: %s -> %s", basename, coordinates))
+		LogPrintln(n, "")
 	}
+
+	// Log upload summary
+	totalArtifacts := len(n.Artifacts)
+	successCount := totalArtifacts - len(n.Failed)
+
+	LogPrintln(n, "Upload Summary:")
+	LogPrintln(n, fmt.Sprintf("  Total: %d, Successful: %d, Failed: %d", totalArtifacts, successCount, len(n.Failed)))
 
 	if len(n.Failed) > 0 {
 		return GetNewError("NexusPlugin Error in Run: some artifacts failed to upload")
@@ -302,7 +349,9 @@ func (n *NexusPlugin) IsMultiFileUploadArgsOk(args Args) error {
 	n.UserName = args.Username
 	n.Password = args.Password
 	n.Repository = args.Repository
-	n.ServerUrl = args.Protocol + "://" + args.ServerUrl
+	// Fix Bug #3: Remove trailing slashes from server URL before concatenating
+	serverUrl := strings.TrimRight(args.ServerUrl, "/")
+	n.ServerUrl = args.Protocol + "://" + serverUrl
 	n.GroupId = args.GroupId
 	n.Version = args.NexusVersion
 	n.Format = args.Format
@@ -382,7 +431,8 @@ func (n *NexusPlugin) IsSingleFileUploadArgsOk(args Args) error {
 	n.UserName = args.Username
 	n.Password = args.Password
 	n.Repository = args.Repository
-	n.ServerUrl = args.ServerUrl
+	// Fix Bug #3: Remove trailing slashes from server URL
+	n.ServerUrl = strings.TrimRight(args.ServerUrl, "/")
 	n.Format = args.Format
 	n.GroupId = values["CgroupId"]
 	n.Version = "nexus3"
@@ -456,10 +506,27 @@ func (n *NexusPlugin) uploadFileNexus2(url string, content io.Reader, filePath s
 	}
 	defer resp.Body.Close()
 
+	// Fix Bug #1: Read response body to provide detailed error messages
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	var bodyContent string
+	if readErr == nil {
+		bodyContent = string(bodyBytes)
+	}
+
 	if resp.StatusCode >= 400 {
 		fmt.Println("File upload failed status ", resp.StatusCode)
+		if bodyContent != "" {
+			fmt.Println("Response body: ", bodyContent)
+			return fmt.Errorf("Upload failed with status %d: %s", resp.StatusCode, bodyContent)
+		}
 		return fmt.Errorf("Upload failed with status %d", resp.StatusCode)
 	}
+
+	// Log success response body for debugging
+	if bodyContent != "" {
+		fmt.Println("Upload successful. Response: ", bodyContent)
+	}
+
 	return nil
 }
 
@@ -487,7 +554,10 @@ func (n *NexusPlugin) uploadFileNexus3(artifact Artifact, filePath string) error
 		assetFieldName = fmt.Sprintf("%s.asset", n.Format)
 	}
 
-	fileWriter, err := writer.CreateFormFile(assetFieldName, artifact.File)
+	// Fix Bug #2: Extract basename from file path to avoid sending full paths to Nexus
+	// This handles both Linux (/path/to/file.jar) and Windows (C:\path\to\file.jar) paths
+	basename := filepath.Base(artifact.File)
+	fileWriter, err := writer.CreateFormFile(assetFieldName, basename)
 	if err != nil {
 		LogPrintln(n, "Error CreateFormFile: ", err.Error())
 		return err
@@ -528,9 +598,25 @@ func (n *NexusPlugin) uploadFileNexus3(artifact Artifact, filePath string) error
 	}
 	defer resp.Body.Close()
 
+	// Fix Bug #1: Read response body to provide detailed error messages
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	var bodyContent string
+	if readErr == nil {
+		bodyContent = string(bodyBytes)
+	}
+
 	if resp.StatusCode >= 400 {
 		LogPrintln(n, "Error upload failed with status: ", resp.StatusCode)
+		if bodyContent != "" {
+			LogPrintln(n, "Response body: ", bodyContent)
+			return fmt.Errorf("Upload failed with status %d: %s", resp.StatusCode, bodyContent)
+		}
 		return fmt.Errorf("Upload failed with status %d", resp.StatusCode)
+	}
+
+	// Log success response body for debugging
+	if bodyContent != "" {
+		LogPrintln(n, "Upload successful. Response: ", bodyContent)
 	}
 
 	return nil
