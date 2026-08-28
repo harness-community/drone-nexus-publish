@@ -104,3 +104,11 @@ In Harnes CI, YAML for multi file Upload
             type: yaml
             version: "2"
 ```
+
+## Security
+
+### v0.1.2 (Aug 2026)
+- Upgraded Go toolchain from 1.25.11 to 1.26.6 to resolve stdlib CVEs (CI-24433):
+  - CVE-2026-33818, CVE-2026-39821, CVE-2026-39822 (HIGH)
+  - CVE-2026-56853, CVE-2026-56858, CVE-2026-56859, CVE-2026-56860, CVE-2026-56862 (HIGH)
+  - CVE-2026-42505 (MEDIUM)
